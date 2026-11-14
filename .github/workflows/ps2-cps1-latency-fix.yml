@@ -1,0 +1,275 @@
+name: PS2 CPS1 low-latency build
+
+# Self-contained build. This file may be named ps2.yml (replacing the
+# upstream matrix workflow) or ps2-cps1-latency-fix.yml. The embedded
+# patch restores pristine v3.1.0 sources and applies the DISPFB2/VBlank
+# latency fix before compiling, so no other uploaded file is required.
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'canonical = official BOOT.ELF layout; single-elf = one directly launchable CPS1.ELF'
+        required: true
+        default: 'canonical'
+        type: choice
+        options:
+          - canonical
+          - single-elf
+  push:
+    paths:
+      - '.github/workflows/ps2.yml'
+      - '.github/workflows/ps2-cps1-latency-fix.yml'
+      - 'src/ps2/ps2_video.c'
+      - 'src/emumain.c'
+      - 'src/common/game_pacing_defaults.h'
+      - 'tests/game_pacing_defaults_tests.c'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: PS2 / CPS1 (latency fix)
+    runs-on: ubuntu-latest
+    container: ps2dev/ps2dev:latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout NJEMU
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install build tools
+        run: apk add --no-cache build-base git bash cmake coreutils
+
+      - name: Apply the embedded latency fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cat > /tmp/fix.b64 <<'B64_EOF'
+          TkpFTVUgMy4xLjAgLSBQUzIgaW5wdXQgbGF0ZW5jeSArIHNwZWVkLXBhY2luZyBmaXgKCjEpIHBz
+          Ml92aWRlby5jIHBzMl9mbGlwU2NyZWVuKCk6IHdyaXRlIERJU1BGQjIgQkVGT1JFIHdhaXRpbmcg
+          Zm9yIFZCbGFuay4KICAgVGhlIEdTIGxhdGNoZXMgdGhlIGRpc3BsYXkgYWRkcmVzcyBhdCBWQmxh
+          bms7IHdhaXRpbmcgZmlyc3QgbWFkZSB0aGUKICAgZnJlc2hseSBkcmF3biBmcmFtZSBhcHBlYXIg
+          b25lIHdob2xlIHJlZnJlc2ggbGF0ZXIgKH4xNi43IG1zIGF0IDYwIEh6KS4KICAgQSBzdGFsZSBW
+          QmxhbmsgdG9rZW4gaXMgZGlzY2FyZGVkIGJlZm9yZSB0aGUgd3JpdGUgYW5kIHRoZSBTQU1FIFZC
+          bGFuawogICBpcyBhd2FpdGVkIGFmdGVyd2FyZHMsIHByZXNlcnZpbmcgRUUgcGFjaW5nIHdpdGgg
+          bm8gZXh0cmEgZnJhbWUuCjIpIGVtdW1haW4uYzogb24gUFMyIHByZXNlbnQgdGhlIGNvbXBsZXRl
+          ZCBmcmFtZSBiZWZvcmUgdGhlIHNvZnR3YXJlCiAgIGZyYW1lLWxpbWl0IHNsZWVwIGluc3RlYWQg
+          b2YgaG9sZGluZyB0aGUgcGljdHVyZSB1bnRpbCB0aGUgZGVhZGxpbmUuCjMpIGdhbWVfcGFjaW5n
+          X2RlZmF1bHRzLmg6IFBTMiBkZWZhdWx0cyA2MEZQU0xpbWl0IE9OLiBWQmxhbmsgd2FpdGluZyBp
+          cwogICBwcmVzZW50YXRpb24gcGFjaW5nIG9ubHk7IHdpdGhvdXQgdGhlIHNvZnR3YXJlIGxpbWl0
+          ZXIgZW11bGF0aW9uIHNwZWVkCiAgIGlzIG5vdCBoZWxkIGF0IDYwIEh6IG9uIGludGVybGFjZWQg
+          NDgwaSBvdXRwdXQuIFBTUCBpcyB1bmNoYW5nZWQuCjQpIHRlc3RzOiBtYXRjaGluZyBkZWZhdWx0
+          IGFzc2VydGlvbnMuCgpSdW50aW1lIGNvbmZpZzogVmlkZW9TeW5jPXllcywgNjBGUFNMaW1pdD15
+          ZXMsIEF1dG9GcmFtZVNraXA9bm8uCk5vIHZpZGVvIG91dHB1dCBtb2RlIGNoYW5nZSAoc3RheXMg
+          NDgwaSkuCkFwcGx5OiBnaXQgYXBwbHkgPHBhdGNoPiAgb3IgIHBhdGNoIC0tYmluYXJ5IC1wMSA8
+          IHBhdGNoIChDUkxGIEMgZmlsZXMpCgotLS0gYS9zcmMvcHMyL3BzMl92aWRlby5jCisrKyBiL3Ny
+          Yy9wczIvcHMyX3ZpZGVvLmMKQEAgLTExNTYsMTggKzExNTYsMzAgQEAKIHN0YXRpYyB2b2lkIHBz
+          Ml9mbGlwU2NyZWVuKHZvaWQgKmRhdGEsIGJvb2wgdnN5bmMpDQogew0KIAlwczJfdmlkZW9fdCAq
+          cHMyID0gKHBzMl92aWRlb190KilkYXRhOw0KKwlib29sIHN5bmNfcGFjaW5nOw0KIA0KLQlnc0tp
+          dF93YWl0X2ZpbmlzaChwczItPmdzR2xvYmFsKTsNCisJLyogcHMyX3N1Ym1pdF9nc19xdWV1ZSgp
+          IGFscmVhZHkgZmVuY2VzIHRoZSBwcmV2aW91cyBHUyBGSU5JU0ggYW5kIEdJRiBETUENCisJICog
+          d29yaywgc28gYW4gZXh0cmEgd2FpdCBoZXJlIG9ubHkgYmxvY2tzIHRoZSBFRSBiZWZvcmUgdGhp
+          cyBmcmFtZSBpcw0KKwkgKiBzdWJtaXR0ZWQuICovDQogCXBzMl9leGVjdXRlX2dzX3F1ZXVlKHBz
+          Mi0+Z3NHbG9iYWwpOw0KIAkvKiBPbmx5IGV4cG9zZSB0aGUgYmFjayBidWZmZXIgYWZ0ZXIgaXRz
+          IEdQVSBjb21tYW5kcyBoYXZlIGNvbXBsZXRlZC4NCiAJICogVGhpcyB3YWl0IHNsZWVwcywgbGVh
+          dmluZyB0aGUgRUUgYXZhaWxhYmxlIHRvIGF1ZGlvIHRocmVhZHMuICovDQogCWdzS2l0X3dhaXRf
+          ZmluaXNoKHBzMi0+Z3NHbG9iYWwpOw0KIA0KLQkvKiBnc0tpdF9zeW5jX2ZsaXAgc3BpbnMgb24g
+          R1NfQ1NSLiBVc2UgdGhlIGludGVycnVwdC1kcml2ZW4sIHNsZWVwYWJsZQ0KLQkgKiB3YWl0IGlu
+          c3RlYWQsIHByZXNlcnZpbmcgZ3NLaXQncyBGaXJzdEZyYW1lIGJlaGF2aW9yLiAqLw0KLQlpZiAo
+          dnN5bmMgJiYgIXBzMi0+Z3NHbG9iYWwtPkZpcnN0RnJhbWUpDQotCQlwczJfd2FpdF9mb3JfdmJs
+          YW5rKCk7DQorCS8qIERJU1BGQjIgaXMgbGF0Y2hlZCBieSB0aGUgR1MgYXQgVkJsYW5rLiBXYWl0
+          aW5nIGZvciBWQmxhbmsgKmJlZm9yZSoNCisJICogd3JpdGluZyBpdCBtZWFucyB0aGUgaGFyZHdh
+          cmUgaGFzIGFscmVhZHkgbGF0Y2hlZCB0aGUgcHJldmlvdXMgYWRkcmVzcywNCisJICogc28gdGhl
+          IGZyZXNobHkgZHJhd24gZnJhbWUgY2FuIG9ubHkgYXBwZWFyIGF0IHRoZSBmb2xsb3dpbmcgVkJs
+          YW5rOg0KKwkgKiBvbmUgd2hvbGUgZnJhbWUgKH4xNi43IG1zIGF0IDYwIEh6KSBvZiBhdm9pZGFi
+          bGUgaW5wdXQgbGF0ZW5jeS4gV3JpdGUNCisJICogdGhlIGRpc3BsYXkgYWRkcmVzcyBmaXJzdCBh
+          bmQgdGhlbiB3YWl0IGZvciB0aGF0IHNhbWUgVkJsYW5rLCB3aGljaA0KKwkgKiBzdGlsbCBwYWNl
+          cyB0aGUgRUUgd2l0aG91dCBkZWxheWluZyB0aGUgcGljdHVyZS4gVGhlIHN0YWxlIHRva2VuIGlz
+          DQorCSAqIGRpc2NhcmRlZCBiZWZvcmUgdGhlIHdyaXRlIChub3QgYWZ0ZXIgaXQpIHNvIHRoZSBW
+          QmxhbmsgdGhhdCBhY3R1YWxseQ0KKwkgKiBkaXNwbGF5cyB0aGlzIGZyYW1lIGNhbiBuZXZlciBi
+          ZSBtaXNzZWQuICovDQorCXN5bmNfcGFjaW5nID0gdnN5bmMgJiYgIXBzMi0+Z3NHbG9iYWwtPkZp
+          cnN0RnJhbWUgJiYgdnN5bmNfc2VtYV9pZCA+PSAwOw0KKwlpZiAoc3luY19wYWNpbmcpDQorCQlQ
+          b2xsU2VtYSh2c3luY19zZW1hX2lkKTsNCiAJZ3NLaXRfZmxpcChwczItPmdzR2xvYmFsKTsNCisJ
+          aWYgKHN5bmNfcGFjaW5nKQ0KKwkJV2FpdFNlbWEodnN5bmNfc2VtYV9pZCk7DQogfQ0KIA0KIHN0
+          YXRpYyB2b2lkIHBzMl9iZWdpbkZyYW1lKHZvaWQgKmRhdGEpDQotLS0gYS9zcmMvZW11bWFpbi5j
+          CisrKyBiL3NyYy9lbXVtYWluLmMKQEAgLTQ2OCwxMSArNDY4LDE4IEBACiAJCWJvb2wgc3luY19m
+          bGlwID0gZnJhbWVfcGFjaW5nX3Nob3VsZF9zeW5jX2ZsaXAoDQogCQkJb3B0aW9uX3NwZWVkbGlt
+          aXQgIT0gMCwgb3B0aW9uX3ZzeW5jLCBjdXJyLCB0YXJnZXQpOw0KIAkJYm9vbCBzY2hlZHVsZXJf
+          YmxvY2tlZCA9IHN5bmNfZmxpcDsNCisjaWZkZWYgUFMyDQorCQkvKiBQcmVzZW50IHRoZSBjb21w
+          bGV0ZWQgZnJhbWUgaW1tZWRpYXRlbHkuIFNsZWVwaW5nIHVudGlsIHRoZSBzb2Z0d2FyZQ0KKwkJ
+          ICogcGFjaW5nIGRlYWRsaW5lIGJlZm9yZSBmbGlwcGluZyBob2xkcyB0aGUgcGljdHVyZSBmb3Ig
+          dXAgdG8gYSBmdWxsDQorCQkgKiBmcmFtZSBhbmQgaXMgdGhlIGRvbWluYW50IGF2b2lkYWJsZSBz
+          b3VyY2Ugb2YgaW5wdXQgbGF0ZW5jeSBoZXJlLiAqLw0KKwkJY29uc3QgYm9vbCBwYWNlX2JlZm9y
+          ZV9mbGlwID0gZmFsc2U7DQorI2Vsc2UNCisJCS8qIE90aGVyIHBsYXRmb3JtcyBrZWVwIHRoZSBs
+          ZWdhY3kgb3JkZXI6IHJlYWNoIHRoZSBlbXVsYXRpb24gZGVhZGxpbmUNCisJCSAqIGJlZm9yZSBw
+          cmVzZW50aW5nIHdoZW4gbm8gdXNlZnVsIFZCbGFuayB3YWl0IGlzIGF2YWlsYWJsZS4gKi8NCisJ
+          CWNvbnN0IGJvb2wgcGFjZV9iZWZvcmVfZmxpcCA9IHRydWU7DQorI2VuZGlmDQogDQotCQkvKiBX
+          aXRoIHNvZnR3YXJlIHBhY2luZyBidXQgbm8gdXNlZnVsIFZCbGFuayB3YWl0LCByZWFjaCB0aGUg
+          ZW11bGF0aW9uDQotCQkgKiBkZWFkbGluZSBiZWZvcmUgcHJlc2VudGluZy4gSWYgVlN5bmMgaXMg
+          dXNlZnVsLCBwcmVzZW50IGZpcnN0OiB3YWl0aW5nDQotCQkgKiBmb3IgVkJsYW5rIG1heSBjb25z
+          dW1lIG1vc3QvYWxsIG9mIHRoZSByZW1haW5pbmcgYnVkZ2V0LiAqLw0KLQkJaWYgKG9wdGlvbl9z
+          cGVlZGxpbWl0ICYmICFzeW5jX2ZsaXApDQorCQlpZiAob3B0aW9uX3NwZWVkbGltaXQgJiYgIXN5
+          bmNfZmxpcCAmJiBwYWNlX2JlZm9yZV9mbGlwKQ0KIAkJew0KIAkJCXVpbnQ2NF90IGRlbGF5ID0g
+          ZnJhbWVfcGFjaW5nX3NsZWVwX3VzKHRydWUsIGN1cnIsIHRhcmdldCk7DQogCQkJaWYgKGRlbGF5
+          ICE9IDApDQpAQCAtNDg3LDcgKzQ5NCw3IEBACiANCiAJCS8qIEEgc3luY2hyb25vdXMgZmxpcCBi
+          bG9ja3MgdW50aWwgVkJsYW5rLiBSZS1zYW1wbGUgdGhlIGNsb2NrIGJlZm9yZQ0KIAkJICogYXBw
+          bHlpbmcgdGhlIHNvZnR3YXJlIGxpbWl0IHNvIHRoYXQgVlN5bmMgdGltZSBpcyBuZXZlciBjb3Vu
+          dGVkIHR3aWNlLiAqLw0KLQkJaWYgKG9wdGlvbl9zcGVlZGxpbWl0ICYmIHN5bmNfZmxpcCkNCisJ
+          CWlmIChvcHRpb25fc3BlZWRsaW1pdCAmJiAoc3luY19mbGlwIHx8ICFwYWNlX2JlZm9yZV9mbGlw
+          KSkNCiAJCXsNCiAJCQl1aW50NjRfdCBkZWxheSA9IGZyYW1lX3BhY2luZ19zbGVlcF91cyh0cnVl
+          LCBjdXJyLCB0YXJnZXQpOw0KIAkJCWlmIChkZWxheSAhPSAwKQ0KLS0tIGEvc3JjL2NvbW1vbi9n
+          YW1lX3BhY2luZ19kZWZhdWx0cy5oCisrKyBiL3NyYy9jb21tb24vZ2FtZV9wYWNpbmdfZGVmYXVs
+          dHMuaApAQCAtMywxMSArMywxNyBAQAogCiAjaW5jbHVkZSAiY29tbW9uL2VtdWxhdG9yX29wdGlv
+          bnMuaCIKIAotLyogQ29uc29sZXMgd2l0aCBmaXhlZCBkaXNwbGF5IHRpbWluZyBkZWZhdWx0IHRv
+          IHN5bmNocm9uaXplZCBwcmVzZW50YXRpb24KLSAqIHdpdGhvdXQgYW4gYWRkaXRpb25hbCBzb2Z0
+          d2FyZSBmcmFtZSB3YWl0LiBPdGhlciBwbGF0Zm9ybXMgcmV0YWluIHRoZWlyCi0gKiBleGlzdGlu
+          ZyBwZXItY29yZSBkZWZhdWx0cyAoQ1BTMiBWU3luYyBvbjsgYWxsIG90aGVyIGNvcmVzIFZTeW5j
+          IG9mZikuCisvKiBDb25zb2xlcyB3aXRoIGZpeGVkIGRpc3BsYXkgdGltaW5nIGRlZmF1bHQgdG8g
+          c3luY2hyb25pemVkIHByZXNlbnRhdGlvbi4KKyAqIFBTMiBhbHNvIG5lZWRzIHRoZSBzb2Z0d2Fy
+          ZSA2MCBIeiBsaW1pdGVyOiBWQmxhbmsgd2FpdGluZyBpcyBwcmVzZW50YXRpb24KKyAqIHBhY2lu
+          ZyBvbmx5IChzZWUgY29tbW9uL2ZyYW1lX3BhY2luZy5oKSBhbmQgZG9lcyBub3QgcmVsaWFibHkg
+          aG9sZCBlbXVsYXRpb24KKyAqIHNwZWVkIG9uIGludGVybGFjZWQgNDgwaSBvdXRwdXQuIFBTUCBr
+          ZWVwcyB0aGUgbGVnYWN5IG5vLXNvZnR3YXJlLXRocm90dGxlCisgKiBkZWZhdWx0LiBPdGhlciBw
+          bGF0Zm9ybXMgcmV0YWluIHRoZWlyIHBlci1jb3JlIGRlZmF1bHRzIChDUFMyIFZTeW5jIG9uOwor
+          ICogYWxsIG90aGVyIGNvcmVzIFZTeW5jIG9mZikuCiAgKiBUaGVzZSB2YWx1ZXMgYXBwbHkgb25s
+          eSB3aGVuIGNyZWF0aW5nL2xvYWRpbmcgYSBnYW1lJ3MgZGVmYXVsdCBjb25maWcuICovCi0jaWYg
+          ZGVmaW5lZChQU1ApIHx8IGRlZmluZWQoUFMyKQorI2lmIGRlZmluZWQoUFMyKQorI2RlZmluZSBO
+          SkVNVV9ERUZBVUxUX1ZTWU5DIFZTWU5DX01PREVfT04KKyNkZWZpbmUgTkpFTVVfREVGQVVMVF9G
+          UkFNRV9MSU1JVCAxCisjZWxpZiBkZWZpbmVkKFBTUCkKICNkZWZpbmUgTkpFTVVfREVGQVVMVF9W
+          U1lOQyBWU1lOQ19NT0RFX09OCiAjZGVmaW5lIE5KRU1VX0RFRkFVTFRfRlJBTUVfTElNSVQgMAog
+          I2VsaWYgZGVmaW5lZChCVUlMRF9DUFMyKQotLS0gYS90ZXN0cy9nYW1lX3BhY2luZ19kZWZhdWx0
+          c190ZXN0cy5jCisrKyBiL3Rlc3RzL2dhbWVfcGFjaW5nX2RlZmF1bHRzX3Rlc3RzLmMKQEAgLTQs
+          OSArNCwxMyBAQAogCiBpbnQgbWFpbih2b2lkKQogewotI2lmIGRlZmluZWQoUFNQKSB8fCBkZWZp
+          bmVkKFBTMikKLSAgICAvKiBCb3RoIDYwIEh6IGNvbnNvbGUgYmFja2VuZHMgZGVmYXVsdCB0byBz
+          eW5jaHJvbml6ZWQgZmxpcHMgd2l0aG91dCBhCi0gICAgICogc2Vjb25kIHNvZnR3YXJlIHRocm90
+          dGxlLCByZWdhcmRsZXNzIG9mIHRoZSBlbXVsYXRlZCBhcmNhZGUgc3lzdGVtLiAqLworI2lmIGRl
+          ZmluZWQoUFMyKQorICAgIC8qIFBTMiBuZWVkcyB0aGUgc29mdHdhcmUgNjAgSHogbGltaXRlciB0
+          byBob2xkIGVtdWxhdGlvbiBzcGVlZCBvbiA0ODBpOworICAgICAqIFZCbGFuayB3YWl0aW5nIG9u
+          bHkgcGFjZXMgcHJlc2VudGF0aW9uLCBub3QgdGhlIGVtdWxhdGVkIG1hY2hpbmUuICovCisgICAg
+          YXNzZXJ0KE5KRU1VX0RFRkFVTFRfVlNZTkMgPT0gVlNZTkNfTU9ERV9PTik7CisgICAgYXNzZXJ0
+          KE5KRU1VX0RFRkFVTFRfRlJBTUVfTElNSVQgPT0gMSk7CisjZWxpZiBkZWZpbmVkKFBTUCkKKyAg
+          ICAvKiBQU1Aga2VlcHMgdGhlIGxlZ2FjeSBzeW5jaHJvbml6ZWQgZmxpcHMgd2l0aG91dCBhIHNv
+          ZnR3YXJlIHRocm90dGxlLiAqLwogICAgIGFzc2VydChOSkVNVV9ERUZBVUxUX1ZTWU5DID09IFZT
+          WU5DX01PREVfT04pOwogICAgIGFzc2VydChOSkVNVV9ERUZBVUxUX0ZSQU1FX0xJTUlUID09IDAp
+          OwogI2VsaWYgZGVmaW5lZChCVUlMRF9DUFMyKQo=
+          B64_EOF
+          base64 -d /tmp/fix.b64 > /tmp/fix.patch
+          # Restore pristine v3.1.0 sources no matter what the web upload changed.
+          # master HEAD == v3.1.0 tag == aad8656 (verified against upstream API).
+          git checkout aad8656dbb2c2597bdd33509c84a1986707f5dbb -- \
+            src/ps2/ps2_video.c src/emumain.c \
+            src/common/game_pacing_defaults.h tests/game_pacing_defaults_tests.c
+          git apply --check /tmp/fix.patch
+          git apply /tmp/fix.patch
+          echo 'Embedded latency patch applied:'
+          git diff --stat
+
+      - name: Verify the fix is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          flip_start=$(grep -n '^static void ps2_flipScreen' src/ps2/ps2_video.c | tail -1 | cut -d: -f1)
+          test -n "$flip_start"
+          sed -n "${flip_start},/^}/p" src/ps2/ps2_video.c > /tmp/flip.c
+          ! grep -q 'ps2_wait_for_vblank();' /tmp/flip.c
+          test "$(grep -c 'PollSema(vsync_sema_id)' /tmp/flip.c)" -eq 1
+          test "$(grep -c 'WaitSema(vsync_sema_id)' /tmp/flip.c)" -eq 1
+          p=$(grep -n 'PollSema(vsync_sema_id)' /tmp/flip.c | head -1 | cut -d: -f1)
+          g=$(grep -n 'gsKit_flip(ps2->gsGlobal)' /tmp/flip.c | head -1 | cut -d: -f1)
+          w=$(grep -n 'WaitSema(vsync_sema_id)' /tmp/flip.c | head -1 | cut -d: -f1)
+          test "$p" -lt "$g"
+          test "$g" -lt "$w"
+          grep -q 'const bool pace_before_flip = false;' src/emumain.c
+          awk '/#if defined\(PS2\)/,/#elif defined\(PSP\)/' \
+            src/common/game_pacing_defaults.h | grep -q 'define NJEMU_DEFAULT_FRAME_LIMIT 1'
+          echo "OK: DISPFB2 leads VBlank (PollSema=$p < flip=$g < WaitSema=$w); PS2 limiter on."
+
+      - name: Checkout ps2_drivers (required by every PS2 build)
+        uses: actions/checkout@v7
+        with:
+          repository: fjtrujy/ps2_drivers
+          ref: njemu
+          path: .ci-deps/ps2_drivers
+          persist-credentials: false
+
+      - name: Build, validate and install ps2_drivers
+        run: |
+          git -C .ci-deps/ps2_drivers rev-parse HEAD
+          cmake -S .ci-deps/ps2_drivers -B .ci-deps/ps2_drivers/build \
+            -DCMAKE_TOOLCHAIN_FILE="$PS2DEV/share/ps2dev.cmake" \
+            -DBUILD_SAMPLES=OFF
+          cmake --build .ci-deps/ps2_drivers/build \
+            --parallel "$(getconf _NPROCESSORS_ONLN)"
+          cmake --build .ci-deps/ps2_drivers/build --target \
+            ps2_drivers_irximg_check ps2_drivers_irximg_stage_check \
+            ps2_drivers_img_payload_check ps2_drivers_hdd_launch_check \
+            ps2_drivers_bootstrap_args_check
+          cmake --install .ci-deps/ps2_drivers/build
+          test -s "$PS2SDK/ports/lib/libps2_drivers_img.a"
+          test -s "$PS2SDK/ports/include/cacheio.h"
+          test -s "$PS2SDK/ports/share/ps2_drivers/ps2_drivers.irximg"
+          test -s "$PS2SDK/ports/share/ps2_drivers/ps2_drivers_irximg_bootstrap.elf"
+
+      - name: Compile PS2 / CPS1
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="${{ inputs.package || 'canonical' }}"
+          if [ "$pkg" = "canonical" ]; then
+            extra=(-DNJEMU_CANONICAL_RELEASE=ON -DPS2_EXTERNAL_IRX_IMAGE=ON)
+          else
+            extra=(-DPS2_EXTERNAL_IRX_IMAGE=OFF)
+          fi
+          mkdir -p build
+          cd build
+          cmake -DPLATFORM=PS2 \
+            -DCMAKE_TOOLCHAIN_FILE="$PS2DEV/share/ps2dev.cmake" \
+            -DTARGET=CPS1 \
+            -DCOMMAND_LIST=ON \
+            -DADHOC=OFF \
+            -DSAVE_STATE=ON \
+            -DGUI=ON \
+            -DPS2_FAST_CACHE=OFF \
+            "${extra[@]}" \
+            ..
+          cmake --build . --parallel "$(getconf _NPROCESSORS_ONLN)"
+          cmake --install .
+          if [ "$pkg" = "canonical" ]; then
+            test -s install/BOOT.ELF
+            test -s install/CPS1
+            test -s install/ps2_drivers.irximg
+            ls -lh install/BOOT.ELF install/CPS1
+          else
+            test -s install/CPS1.ELF
+            ls -lh install/CPS1.ELF
+          fi
+
+      - name: Bundle low-latency configuration
+        run: |
+          mkdir -p build/install
+          cat > build/install/njemu.ini <<'EOF'
+          [System Settings]
+          INIFileVersion=23
+
+          [Video Settings]
+          VideoSync=yes
+          AutoFrameSkip=no
+          FrameSkipLevel=0
+          ShowFPS=no
+          60FPSLimit=yes
+          EOF
+          echo 'Bundled njemu.ini:'
+          cat build/install/njemu.ini
+
+      - name: Upload PS2 CPS1 package
+        uses: actions/upload-artifact@v7
+        with:
+          name: NJEMU-PS2-CPS1-${{ inputs.package || 'canonical' }}-latency-fix
+          path: build/install/
+          if-no-files-found: error
+          retention-days: 30
