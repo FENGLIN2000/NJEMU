@@ -1,0 +1,21 @@
+name: RETIRED - do not run (old cps2-menu build)
+
+# This workflow used to build the garbled-screen / hard-lock ELF.
+# It is kept only so no file has to be deleted from the web UI; it does not
+# compile anything. Run the STOCK workflow first, then frame-pacing-only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retired:
+    name: Retired build - nothing is compiled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain
+        run: |
+          echo "This build is retired (it produced a garbled screen on PS2)."
+          echo "Run 'PS2 CPS1 OFFICIAL v3.1.0 (STOCK - run this first)' instead."
+          echo "Only after that boots, run 'PS2 CPS1 frame-pacing-only'."
