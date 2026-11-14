@@ -468,11 +468,18 @@ void update_screen(void)
 		bool sync_flip = frame_pacing_should_sync_flip(
 			option_speedlimit != 0, option_vsync, curr, target);
 		bool scheduler_blocked = sync_flip;
+#ifdef PS2
+		/* Present the completed frame immediately. Sleeping until the software
+		 * pacing deadline before flipping holds the picture for up to a full
+		 * frame and is the dominant avoidable source of input latency here. */
+		const bool pace_before_flip = false;
+#else
+		/* Other platforms keep the legacy order: reach the emulation deadline
+		 * before presenting when no useful VBlank wait is available. */
+		const bool pace_before_flip = true;
+#endif
 
-		/* With software pacing but no useful VBlank wait, reach the emulation
-		 * deadline before presenting. If VSync is useful, present first: waiting
-		 * for VBlank may consume most/all of the remaining budget. */
-		if (option_speedlimit && !sync_flip)
+		if (option_speedlimit && !sync_flip && pace_before_flip)
 		{
 			uint64_t delay = frame_pacing_sleep_us(true, curr, target);
 			if (delay != 0)
@@ -487,7 +494,7 @@ void update_screen(void)
 
 		/* A synchronous flip blocks until VBlank. Re-sample the clock before
 		 * applying the software limit so that VSync time is never counted twice. */
-		if (option_speedlimit && sync_flip)
+		if (option_speedlimit && (sync_flip || !pace_before_flip))
 		{
 			uint64_t delay = frame_pacing_sleep_us(true, curr, target);
 			if (delay != 0)

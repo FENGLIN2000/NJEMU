@@ -1156,18 +1156,30 @@ static void ps2_waitVsync(void *data)
 static void ps2_flipScreen(void *data, bool vsync)
 {
 	ps2_video_t *ps2 = (ps2_video_t*)data;
+	bool sync_pacing;
 
-	gsKit_wait_finish(ps2->gsGlobal);
+	/* ps2_submit_gs_queue() already fences the previous GS FINISH and GIF DMA
+	 * work, so an extra wait here only blocks the EE before this frame is
+	 * submitted. */
 	ps2_execute_gs_queue(ps2->gsGlobal);
 	/* Only expose the back buffer after its GPU commands have completed.
 	 * This wait sleeps, leaving the EE available to audio threads. */
 	gsKit_wait_finish(ps2->gsGlobal);
 
-	/* gsKit_sync_flip spins on GS_CSR. Use the interrupt-driven, sleepable
-	 * wait instead, preserving gsKit's FirstFrame behavior. */
-	if (vsync && !ps2->gsGlobal->FirstFrame)
-		ps2_wait_for_vblank();
+	/* DISPFB2 is latched by the GS at VBlank. Waiting for VBlank *before*
+	 * writing it means the hardware has already latched the previous address,
+	 * so the freshly drawn frame can only appear at the following VBlank:
+	 * one whole frame (~16.7 ms at 60 Hz) of avoidable input latency. Write
+	 * the display address first and then wait for that same VBlank, which
+	 * still paces the EE without delaying the picture. The stale token is
+	 * discarded before the write (not after it) so the VBlank that actually
+	 * displays this frame can never be missed. */
+	sync_pacing = vsync && !ps2->gsGlobal->FirstFrame && vsync_sema_id >= 0;
+	if (sync_pacing)
+		PollSema(vsync_sema_id);
 	gsKit_flip(ps2->gsGlobal);
+	if (sync_pacing)
+		WaitSema(vsync_sema_id);
 }
 
 static void ps2_beginFrame(void *data)
