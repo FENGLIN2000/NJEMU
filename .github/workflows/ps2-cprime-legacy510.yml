@@ -1,0 +1,83 @@
+name: PS2 CPS1 C-PRIME 5-10 GUI
+
+# C' : restore the 2026-05-10 low-latency PS2 presentation backend as a
+# self-consistent tree, and enable the GUI that upstream forgot to pass.
+# No source file is modified.  The only variable is -DGUI (ON / OFF).
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  build:
+    name: CPS1 legacy510 GUI=${{ matrix.gui }}
+    runs-on: ubuntu-latest
+    container: ps2dev/ps2dev:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gui: [ON, OFF]
+    steps:
+      - name: Checkout pinned official NJEMU (156e26141 / 2026-05-10)
+        uses: actions/checkout@v4
+        with:
+          repository: fjtrujy/NJEMU
+          ref: 156e26141c5b8c25dd693693d85cb8fda16cc3c6
+          path: njemu
+          fetch-depth: 0
+
+      - name: Verify pinned source fingerprints
+        run: |
+          set -eu
+          test "$(sha256sum njemu/src/ps2/ps2_video.c | cut -d' ' -f1)" = "593a6c98d0a9f0ae6548fb4886b5aef3281370f6235da1f7e2712e029e9517c4"
+          test "$(sha256sum njemu/src/common/ui_menu.c | cut -d' ' -f1)" = "049931ef0b2616c3a06139923d699e1c561413e6aebece916c42f46efc8e7720"
+          test "$(sha256sum njemu/CMakeLists.txt | cut -d' ' -f1)" = "4bafcbe81a783d0d8ba8cb626d2f530fc4fc6d6c0f5af39a80fc9b03ffe11618"
+          grep -q 'gsKit_queue_exec(ps2->gsGlobal);' njemu/src/ps2/ps2_video.c
+          grep -q 'option(GUI "GUI" OFF)' njemu/CMakeLists.txt
+          test -f njemu/src/common/ui_menu.c
+          test -f njemu/src/ps2/ps2_ui_draw.c
+          test -f njemu/src/ps2/ps2_ui_text.c
+          test -f njemu/src/common/ui_draw.c
+          test -f njemu/resources/cps1/game_name.ini
+          echo "PIN OK: NJEMU 156e26141 (2026-05-10), legacy presentation chain confirmed"
+
+      - name: Install build dependencies
+        run: apk add --no-cache build-base git bash cmake
+
+      - name: Configure and build CPS1 (GUI=${{ matrix.gui }})
+        run: |
+          set -eu
+          cd njemu
+          mkdir -p build
+          cd build
+          cmake -DPLATFORM="PS2" \
+            -DCMAKE_TOOLCHAIN_FILE=$PS2DEV/share/ps2dev.cmake \
+            -DTARGET="CPS1" \
+            -DGUI=${{ matrix.gui }} \
+            -DLARGE_MEMORY=OFF \
+            -DCOMMAND_LIST=OFF \
+            -DADHOC=OFF \
+            -DSAVE_STATE=OFF \
+            ..
+          make -j"$(getconf _NPROCESSORS_ONLN)"
+          cmake --install .
+          echo "=== build/install tree ==="
+          find install -maxdepth 2 -type f | sort
+
+      - name: Verify ELF and GUI flag
+        run: |
+          set -eu
+          test -s njemu/build/install/CPS1.elf
+          ls -lh njemu/build/install/CPS1.elf
+          grep -q "GUI:BOOL=${{ matrix.gui }}" njemu/build/CMakeCache.txt
+          echo "ELF OK, GUI=${{ matrix.gui }}"
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NJEMU-PS2-CPS1-legacy510-gui-${{ matrix.gui }}
+          path: njemu/build/install/
+          if-no-files-found: error
